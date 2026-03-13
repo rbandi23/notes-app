@@ -44,6 +44,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
+    async authorized({ auth, request }) {
+      const isLoggedIn = !!auth?.user;
+      const isProtected = request.nextUrl.pathname.startsWith("/notes") ||
+        request.nextUrl.pathname.startsWith("/api/notes") ||
+        request.nextUrl.pathname.startsWith("/api/images") ||
+        request.nextUrl.pathname.startsWith("/api/config");
+      if (isProtected && !isLoggedIn) return false;
+      return true;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
