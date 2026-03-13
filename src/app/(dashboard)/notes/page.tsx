@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { Suspense, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { NoteList } from "@/components/notes/NoteList";
 import { NoteSearch } from "@/components/notes/NoteSearch";
 import { NoteGraph } from "@/components/notes/NoteGraph";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PlusCircle, List, Network } from "lucide-react";
 
-export default function NotesPage() {
+function NotesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [searchActive, setSearchActive] = useState(false);
@@ -67,5 +68,13 @@ export default function NotesPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function NotesPage() {
+  return (
+    <Suspense fallback={<Skeleton className="h-96 w-full rounded-xl" />}>
+      <NotesContent />
+    </Suspense>
   );
 }
