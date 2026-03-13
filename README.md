@@ -1,10 +1,6 @@
 # Continuum Notes
 
 An AI-powered note-taking app that automatically enriches your notes with semantic embeddings, related content discovery, web search results, and a visual knowledge graph — all running as background jobs the moment you save.
-
-<!-- Replace with actual screenshot -->
-![App Overview](screenshots/app-overview.png)
-
 ---
 
 ## Table of Contents
