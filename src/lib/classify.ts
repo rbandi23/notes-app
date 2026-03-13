@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAI } from "./openai";
 import { LLM_MODEL } from "./constants";
 
 export interface ClassificationQuery {
@@ -135,7 +135,7 @@ export async function classifyNote(
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = getOpenAI();
     const noteText = `Title: ${title}\n\nContent: ${content.slice(0, 8000)}`;
 
     const response = await client.chat.completions.create({

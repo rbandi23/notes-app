@@ -1,6 +1,6 @@
 import { inngest } from "./client";
 import { db } from "@/lib/db";
-import { notes, relatedNotes, relatedWebContent, noteImages } from "@/lib/db/schema";
+import { notes, relatedNotes, relatedWebContent } from "@/lib/db/schema";
 import { generateEmbedding } from "@/lib/embeddings";
 import { searchWeb } from "@/lib/search";
 
@@ -108,47 +108,28 @@ export const enrichNote = inngest.createFunction(
       throw new Error(`Note ${noteId} not found`);
     }
 
-    // Gather image descriptions for this note
-    const imageDescriptions = await step.run("gather-image-descriptions", async () => {
-      log("gather-image-descriptions", "Fetching image descriptions", { noteId });
-      const images = await db
-        .select({ description: noteImages.description })
-        .from(noteImages)
-        .where(eq(noteImages.noteId, noteId));
-      log("gather-image-descriptions", "Found images", { count: images.length });
-      return images
-        .map((img) => img.description)
-        .filter((d) => d && d !== "[uploaded image]")
-        .join(". ");
-    });
-
-    const textContent = [note.title, note.content, imageDescriptions]
+    const textContent = [note.title, note.content]
       .filter(Boolean)
       .join(". ");
     log("prepare-text", "Text content prepared", { length: textContent.length });
 
-    // Generate embedding
-    const embedding = await step.run("generate-embedding", async () => {
-      log("generate-embedding", "Generating embedding", { textLength: textContent.length });
+    // Generate embedding, extract tags, and classify note in parallel
+    const [embedding, tags, classification] = await step.run("llm-parallel", async () => {
+      log("llm-parallel", "Running embedding, tags, and classification in parallel");
       try {
-        const result = await generateEmbedding(textContent);
-        log("generate-embedding", "Embedding generated", { dimensions: result.length });
+        const result = await Promise.all([
+          generateEmbedding(textContent),
+          extractTags(textContent),
+          classifyNote(note.title, note.content),
+        ]);
+        log("llm-parallel", "All LLM steps completed", {
+          embeddingDims: result[0].length,
+          tags: result[1],
+          classification: result[2].classification,
+        });
         return result;
       } catch (err) {
-        logError("generate-embedding", "Failed to generate embedding", err);
-        throw err;
-      }
-    });
-
-    // Extract tags (only with OpenAI key)
-    const tags = await step.run("extract-tags", async () => {
-      log("extract-tags", "Extracting tags");
-      try {
-        const result = await extractTags(textContent);
-        log("extract-tags", "Tags extracted", { tags: result });
-        return result;
-      } catch (err) {
-        logError("extract-tags", "Failed to extract tags", err);
+        logError("llm-parallel", "Failed parallel LLM step", err);
         throw err;
       }
     });
@@ -161,23 +142,6 @@ export const enrichNote = inngest.createFunction(
         .set({ embedding, tags: tags.length > 0 ? tags : note.tags })
         .where(eq(notes.id, noteId));
       log("store-embedding", "Stored successfully");
-    });
-
-    // Classify note as personal or non-personal
-    const classification = await step.run("classify-note", async () => {
-      log("classify-note", "Classifying note");
-      try {
-        const result = await classifyNote(note.title, note.content);
-        log("classify-note", "Classification result", {
-          classification: result.classification,
-          retrieval_enabled: result.retrieval_enabled,
-          queryCount: result.queries.length,
-        });
-        return result;
-      } catch (err) {
-        logError("classify-note", "Failed to classify note", err);
-        throw err;
-      }
     });
 
     // Find related notes: vector similarity + keyword matching + rerank
@@ -261,27 +225,26 @@ export const enrichNote = inngest.createFunction(
         })),
       });
 
-      for (const scored of qualified.slice(0, MAX_RELATED_NOTES)) {
+      await Promise.all(qualified.slice(0, MAX_RELATED_NOTES).flatMap((scored) => [
         // Forward: this note → related note
-        await db.insert(relatedNotes).values({
+        db.insert(relatedNotes).values({
           sourceNoteId: noteId,
           relatedNoteId: scored.id,
           similarityScore: scored.combinedScore,
         }).onConflictDoUpdate({
           target: [relatedNotes.sourceNoteId, relatedNotes.relatedNoteId],
           set: { similarityScore: scored.combinedScore },
-        });
-
+        }),
         // Reverse: related note → this note (bidirectional)
-        await db.insert(relatedNotes).values({
+        db.insert(relatedNotes).values({
           sourceNoteId: scored.id,
           relatedNoteId: noteId,
           similarityScore: scored.combinedScore,
         }).onConflictDoUpdate({
           target: [relatedNotes.sourceNoteId, relatedNotes.relatedNoteId],
           set: { similarityScore: scored.combinedScore },
-        });
-      }
+        }),
+      ]));
       log("find-related-notes", "Stored related notes", {
         count: Math.min(qualified.length, MAX_RELATED_NOTES),
       });
@@ -308,27 +271,37 @@ export const enrichNote = inngest.createFunction(
         return;
       }
 
+      // Run all web searches in parallel
+      const queries = classification.queries
+        .map((q) => ({
+          queryStr: typeof q === "string" ? q : q.query,
+          keyword: typeof q === "string" ? q : q.keyword || q.query,
+          description: typeof q === "string" ? q : q.description || q.query,
+        }))
+        .filter((q) => q.queryStr);
+
+      const searchResults = await Promise.all(
+        queries.map(async (q) => {
+          log("web-search", "Searching web", { query: q.queryStr });
+          try {
+            const results = await searchWeb(q.queryStr);
+            return { ...q, results };
+          } catch (err) {
+            logError("web-search", `Web search failed for query: ${q.queryStr}`, err);
+            return { ...q, results: [] };
+          }
+        })
+      );
+
+      // Deduplicate and insert
       const seenUrls = new Set<string>();
-
-      for (const q of classification.queries) {
-        const queryStr = typeof q === "string" ? q : q.query;
-        const keyword = typeof q === "string" ? q : q.keyword || q.query;
-        const description = typeof q === "string" ? q : q.description || q.query;
-        if (!queryStr) continue;
-
-        log("web-search", "Searching web", { query: queryStr });
-        try {
-          const results = await searchWeb(queryStr);
-          log("web-search", "Web search results", {
-            query: queryStr,
-            resultCount: results.length,
-          });
-
-          // Only keep the first result per query
-          const firstNew = results.find((r) => !seenUrls.has(r.url));
-          if (firstNew) {
-            seenUrls.add(firstNew.url);
-            await db.insert(relatedWebContent).values({
+      const inserts = [];
+      for (const { keyword, description, results } of searchResults) {
+        const firstNew = results.find((r) => !seenUrls.has(r.url));
+        if (firstNew) {
+          seenUrls.add(firstNew.url);
+          inserts.push(
+            db.insert(relatedWebContent).values({
               noteId,
               url: firstNew.url,
               title: firstNew.title,
@@ -336,12 +309,11 @@ export const enrichNote = inngest.createFunction(
               thumbnailUrl: firstNew.thumbnailUrl,
               contentType: firstNew.contentType,
               relevanceReason: JSON.stringify({ keyword, description }),
-            });
-          }
-        } catch (err) {
-          logError("web-search", `Web search failed for query: ${queryStr}`, err);
+            })
+          );
         }
       }
+      await Promise.all(inserts);
       log("web-search", "Web search complete", { totalUrls: seenUrls.size });
     });
 

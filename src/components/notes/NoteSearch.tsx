@@ -6,7 +6,7 @@ import { NoteCard } from "./NoteCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search, X } from "lucide-react";
+import { Search, X, ImageIcon, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 interface NoteSearchProps {
@@ -17,6 +17,7 @@ export function NoteSearch({ onActiveChange }: NoteSearchProps) {
   const [inputValue, setInputValue] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [searchImages, setSearchImages] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -27,39 +28,68 @@ export function NoteSearch({ onActiveChange }: NoteSearchProps) {
   }, [inputValue]);
 
   const isActive = query.trim().length > 0;
-  const { notes, pagination, isLoading } = useSearchNotes(query, page);
+  const { notes, pagination, isLoading, mutate } = useSearchNotes(query, page, 20, searchImages);
 
   useEffect(() => {
     onActiveChange?.(isActive);
   }, [isActive, onActiveChange]);
 
   async function handleDelete(id: string) {
+    // Optimistic delete: remove from cache immediately
+    mutate(
+      (current: { notes: Array<{ id: string }>; pagination: typeof pagination } | undefined) => current ? {
+        ...current,
+        notes: current.notes.filter((n) => n.id !== id),
+      } : current,
+      { revalidate: false }
+    );
     try {
       await deleteNote(id);
       toast.success("Note deleted");
     } catch {
       toast.error("Failed to delete note");
+      mutate(); // revert on error
     }
   }
 
   return (
     <div className="space-y-4">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-        <Input
-          placeholder="Search notes..."
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          className="pl-9"
-        />
-        {inputValue && (
-          <button
-            onClick={() => setInputValue("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            placeholder={searchImages ? "Search by image content..." : "Search notes..."}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            className="pl-9"
+          />
+          {inputValue && (
+            <button
+              onClick={() => setInputValue("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center rounded-lg border p-0.5">
+          <Button
+            variant={!searchImages ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => { setSearchImages(false); setPage(1); }}
+            title="Search notes"
           >
-            <X className="size-4" />
-          </button>
-        )}
+            <FileText className="size-4" />
+          </Button>
+          <Button
+            variant={searchImages ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => { setSearchImages(true); setPage(1); }}
+            title="Search by images"
+          >
+            <ImageIcon className="size-4" />
+          </Button>
+        </div>
       </div>
       {isActive && (
         <>

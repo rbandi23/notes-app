@@ -122,6 +122,8 @@ export const relatedNotes = pgTable(
       table.sourceNoteId,
       table.relatedNoteId
     ),
+    index("related_notes_source_idx").on(table.sourceNoteId),
+    index("related_notes_related_idx").on(table.relatedNoteId),
   ]
 );
 
@@ -135,6 +137,7 @@ export const noteImages = pgTable(
       .references(() => notes.id, { onDelete: "cascade" }),
     blobUrl: text("blob_url").notNull(),
     description: text("description").notNull().default("[uploaded image]"),
+    embedding: vector("embedding"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [

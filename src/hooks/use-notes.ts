@@ -5,7 +5,8 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 export function useNotes(page = 1, limit = 20) {
   const { data, error, isLoading, mutate } = useSWR(
     `/api/notes?page=${page}&limit=${limit}`,
-    fetcher
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 5000 }
   );
   return {
     notes: data?.notes || [],
@@ -16,18 +17,20 @@ export function useNotes(page = 1, limit = 20) {
   };
 }
 
-export function useSearchNotes(query: string, page = 1, limit = 20) {
-  const { data, error, isLoading } = useSWR(
+export function useSearchNotes(query: string, page = 1, limit = 20, images = false) {
+  const { data, error, isLoading, mutate } = useSWR(
     query?.trim()
-      ? `/api/notes/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}`
+      ? `/api/notes/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}${images ? "&images=true" : ""}`
       : null,
-    fetcher
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 2000, keepPreviousData: true }
   );
   return {
     notes: data?.notes || [],
     pagination: data?.pagination || { page: 1, limit: 20, total: 0, totalPages: 0 },
     isLoading,
     isError: !!error,
+    mutate,
   };
 }
 
@@ -50,7 +53,7 @@ export function useRelatedContent(id: string, shouldPoll: boolean) {
   const { data, error, isLoading } = useSWR(
     id ? `/api/notes/${id}/related` : null,
     fetcher,
-    { refreshInterval: shouldPoll ? 2000 : 0 }
+    { refreshInterval: shouldPoll ? 4000 : 0, shouldRetryOnError: false, revalidateOnFocus: false }
   );
   return {
     enrichmentStatus: data?.enrichmentStatus,

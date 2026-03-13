@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "@/lib/date";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +56,7 @@ function EnrichmentIcon({ status }: { status: string | null }) {
   }
 }
 
-export function NoteCard({ note, onDelete }: NoteCardProps) {
+export const NoteCard = React.memo(function NoteCard({ note, onDelete }: NoteCardProps) {
   const preview =
     note.content.length > 120
       ? note.content.slice(0, 120) + "..."
@@ -107,4 +108,4 @@ export function NoteCard({ note, onDelete }: NoteCardProps) {
       </Card>
     </Link>
   );
-}
+});

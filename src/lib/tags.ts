@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAI } from "./openai";
 
 export async function extractTags(content: string): Promise<string[]> {
   if (!process.env.OPENAI_API_KEY) {
@@ -6,7 +6,7 @@ export async function extractTags(content: string): Promise<string[]> {
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = getOpenAI();
     const response = await client.chat.completions.create({
       model: "gpt-5-nano",
       messages: [

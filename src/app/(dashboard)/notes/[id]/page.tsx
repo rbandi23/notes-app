@@ -83,7 +83,17 @@ export default function NoteDetailPage({
   return (
     <div className="mx-auto max-w-5xl">
       <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={() => router.back()}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            if (window.history.length > 1) {
+              router.back();
+            } else {
+              router.push("/notes");
+            }
+          }}
+        >
           <ArrowLeft className="size-4" />
           Back
         </Button>

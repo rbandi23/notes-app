@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { NoteList } from "@/components/notes/NoteList";
 import { NoteSearch } from "@/components/notes/NoteSearch";
 import { NoteGraph } from "@/components/notes/NoteGraph";
@@ -9,8 +10,21 @@ import { Button } from "@/components/ui/button";
 import { PlusCircle, List, Network } from "lucide-react";
 
 export default function NotesPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [searchActive, setSearchActive] = useState(false);
-  const [view, setView] = useState<"list" | "graph">("list");
+  const view = searchParams.get("view") === "graph" ? "graph" : "list";
+
+  function setView(v: "list" | "graph") {
+    const params = new URLSearchParams(searchParams.toString());
+    if (v === "graph") {
+      params.set("view", "graph");
+    } else {
+      params.delete("view");
+    }
+    router.replace(`/notes?${params.toString()}`, { scroll: false });
+  }
+
   const handleActiveChange = useCallback((active: boolean) => {
     setSearchActive(active);
   }, []);

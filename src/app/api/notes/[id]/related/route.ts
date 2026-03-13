@@ -25,22 +25,23 @@ export async function GET(
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
 
-  const related = await db
-    .select({
-      id: relatedNotes.id,
-      relatedNoteId: relatedNotes.relatedNoteId,
-      similarityScore: relatedNotes.similarityScore,
-      title: notes.title,
-      content: notes.content,
-    })
-    .from(relatedNotes)
-    .innerJoin(notes, eq(relatedNotes.relatedNoteId, notes.id))
-    .where(eq(relatedNotes.sourceNoteId, id));
-
-  const webContent = await db
-    .select()
-    .from(relatedWebContent)
-    .where(eq(relatedWebContent.noteId, id));
+  const [related, webContent] = await Promise.all([
+    db
+      .select({
+        id: relatedNotes.id,
+        relatedNoteId: relatedNotes.relatedNoteId,
+        similarityScore: relatedNotes.similarityScore,
+        title: notes.title,
+        content: notes.content,
+      })
+      .from(relatedNotes)
+      .innerJoin(notes, eq(relatedNotes.relatedNoteId, notes.id))
+      .where(eq(relatedNotes.sourceNoteId, id)),
+    db
+      .select()
+      .from(relatedWebContent)
+      .where(eq(relatedWebContent.noteId, id)),
+  ]);
 
   return NextResponse.json({
     enrichmentStatus: note.enrichmentStatus,

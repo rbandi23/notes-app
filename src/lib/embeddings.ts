@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAI } from "./openai";
 
 // Singleton for Transformers.js model
 let localPipeline: ((text: string) => Promise<number[]>) | null = null;
@@ -25,7 +25,7 @@ async function getLocalPipeline() {
 }
 
 async function openaiEmbed(text: string): Promise<number[]> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = getOpenAI();
   const response = await client.embeddings.create({
     model: "text-embedding-3-small",
     input: text,

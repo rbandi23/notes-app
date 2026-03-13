@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
+import useSWR from "swr";
 
 interface GraphNode {
   id: string;
@@ -107,29 +108,25 @@ function getConnectedComponentColors(
   return colorMap;
 }
 
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
 export function NoteGraph() {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
-  const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [ForceGraph, setForceGraph] = useState<
     typeof import("react-force-graph-2d").default | null
   >(null);
+
+  const { data: graphData, isLoading: loading } = useSWR<GraphData>(
+    "/api/notes/graph",
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 10000 }
+  );
 
   useEffect(() => {
     import("react-force-graph-2d").then((mod) => {
       setForceGraph(() => mod.default);
     });
-  }, []);
-
-  useEffect(() => {
-    fetch("/api/notes/graph")
-      .then((r) => r.json())
-      .then((data) => {
-        setGraphData(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
   }, []);
 
   const handleNodeClick = useCallback(
@@ -166,33 +163,39 @@ export function NoteGraph() {
     []
   );
 
+  const componentColors = useMemo(() => {
+    if (!graphData || graphData.nodes.length === 0) return new Map<string, string>();
+    return getConnectedComponentColors(graphData.nodes, graphData.edges);
+  }, [graphData]);
+
+  const fgData = useMemo(() => {
+    if (!graphData) return null;
+    return {
+      nodes: graphData.nodes.map((n) => ({
+        id: n.id,
+        name: n.title,
+        val: n.size,
+        color: componentColors.get(n.id) || "#94a3b8",
+      })),
+      links: graphData.edges.map((e) => ({
+        source: e.source,
+        target: e.target,
+        value: e.similarity,
+      })),
+    };
+  }, [graphData, componentColors]);
+
   if (loading || !ForceGraph) {
     return <Skeleton className="h-[500px] w-full rounded-xl" />;
   }
 
-  if (!graphData || graphData.nodes.length === 0) {
+  if (!fgData || fgData.nodes.length === 0) {
     return (
       <div className="flex h-[500px] items-center justify-center text-muted-foreground">
         No notes to visualize. Create some notes first.
       </div>
     );
   }
-
-  const componentColors = getConnectedComponentColors(graphData.nodes, graphData.edges);
-
-  const fgData = {
-    nodes: graphData.nodes.map((n) => ({
-      id: n.id,
-      name: n.title,
-      val: n.size,
-      color: componentColors.get(n.id) || "#94a3b8",
-    })),
-    links: graphData.edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      value: e.similarity,
-    })),
-  };
 
   return (
     <div

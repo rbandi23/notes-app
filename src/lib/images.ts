@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAI } from "./openai";
 import { LLM_MODEL } from "./constants";
 
 export async function describeImage(imageUrl: string): Promise<string> {
@@ -7,7 +7,7 @@ export async function describeImage(imageUrl: string): Promise<string> {
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = getOpenAI();
     const response = await client.chat.completions.create({
       model: LLM_MODEL,
       messages: [

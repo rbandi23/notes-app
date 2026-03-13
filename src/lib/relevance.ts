@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAI } from "./openai";
 import { generateEmbedding } from "./embeddings";
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -25,7 +25,7 @@ async function llmRelevance(
   resultTitle: string,
   resultDescription: string
 ): Promise<string> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = getOpenAI();
   const response = await client.chat.completions.create({
     model: "gpt-5-nano",
     messages: [

@@ -2,6 +2,7 @@
 
 import { use, useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useNote, updateNote } from "@/hooks/use-notes";
 import { NoteEditor } from "@/components/notes/NoteEditor";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ export default function EditNotePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
   const { note, isLoading, mutate } = useNote(id);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -51,7 +53,11 @@ export default function EditNotePage({
     try {
       await updateNote(id, { title: t, content: c, contentJson: cj });
       setSaveStatus("saved");
-      mutate();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mutate((prev: any) =>
+        prev ? { ...prev, note: { ...prev.note, title: t, content: c, contentJson: cj } } : prev,
+        { revalidate: false }
+      );
     } catch {
       setSaveStatus("error");
       toast.error("Failed to save");
@@ -113,12 +119,10 @@ export default function EditNotePage({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
-        <Link href={`/notes/${id}`}>
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="size-4" />
-            Back
-          </Button>
-        </Link>
+        <Button variant="ghost" size="sm" onClick={() => router.back()}>
+          <ArrowLeft className="size-4" />
+          Back
+        </Button>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           {saveStatus === "saving" && (
             <>

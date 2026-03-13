@@ -13,7 +13,6 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
     return [];
   }
 
-  console.log("Tavily search started for query:", query);
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
     headers: {
@@ -29,14 +28,11 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
     }),
   });
 
-  console.log("Tavily response status:", response.status);
   if (!response.ok) {
-    console.error("Tavily search failed:", response.statusText);
     return [];
   }
 
   const data = await response.json();
-  console.log("Tavily search results:", JSON.stringify(data, null, 2));
   const results: SearchResult[] = [];
 
   for (const result of data.results || []) {

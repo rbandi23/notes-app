@@ -20,7 +20,15 @@ export async function GET(req: NextRequest) {
 
   const [userNotes, countResult] = await Promise.all([
     db
-      .select()
+      .select({
+        id: notes.id,
+        title: notes.title,
+        content: notes.content,
+        tags: notes.tags,
+        enrichmentStatus: notes.enrichmentStatus,
+        updatedAt: notes.updatedAt,
+        createdAt: notes.createdAt,
+      })
       .from(notes)
       .where(eq(notes.userId, session.user.id))
       .orderBy(desc(notes.updatedAt))

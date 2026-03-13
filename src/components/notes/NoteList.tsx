@@ -11,15 +11,24 @@ import { toast } from "sonner";
 
 export function NoteList() {
   const [page, setPage] = useState(1);
-  const { notes, pagination, isLoading, isError, mutate } = useNotes(page);
+  const data = useNotes(page);
+  const { notes, pagination, isLoading, isError, mutate } = data;
 
   async function handleDelete(id: string) {
+    // Optimistic delete: remove from cache immediately
+    mutate(
+      (current: typeof data) => current ? {
+        ...current,
+        notes: current.notes.filter((n: { id: string }) => n.id !== id),
+      } : current,
+      { revalidate: false }
+    );
     try {
       await deleteNote(id);
       toast.success("Note deleted");
-      mutate();
     } catch {
       toast.error("Failed to delete note");
+      mutate(); // revert on error
     }
   }
 

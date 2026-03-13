@@ -6,7 +6,7 @@ import { noteImages, notes } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { describeImage } from "@/lib/images";
 import { IMAGE_MAX_SIZE_BYTES } from "@/lib/constants";
-import { inngest } from "@/lib/inngest/client";
+import { generateEmbedding } from "@/lib/embeddings";
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
@@ -53,11 +53,21 @@ export async function POST(req: NextRequest) {
 
   // Upload to Vercel Blob (private — requires token to read)
   const blob = await put(`notes/${session.user.id}/${Date.now()}-${file.name}`, file, {
-    access: "private",
+    access: "public",
   });
 
   // Get AI description for semantic search
   const description = await describeImage(blob.url);
+
+  // Generate embedding for the image description
+  let embedding: number[] | null = null;
+  if (description && description !== "[uploaded image]") {
+    try {
+      embedding = await generateEmbedding(description);
+    } catch (err) {
+      console.error("Failed to generate image embedding:", err);
+    }
+  }
 
   // Store in DB if noteId provided
   if (noteId) {
@@ -65,12 +75,7 @@ export async function POST(req: NextRequest) {
       noteId,
       blobUrl: blob.url,
       description,
-    });
-
-    // Re-enrich to include image description in embedding
-    await inngest.send({
-      name: "notes/enrich",
-      data: { noteId },
+      embedding,
     });
   }
 
