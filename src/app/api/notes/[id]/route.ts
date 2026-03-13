@@ -43,22 +43,43 @@ export async function GET(
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
 
-  const related = await db
-    .select({
-      id: relatedNotes.id,
-      relatedNoteId: relatedNotes.relatedNoteId,
-      similarityScore: relatedNotes.similarityScore,
-      title: notes.title,
-      content: notes.content,
-    })
-    .from(relatedNotes)
-    .innerJoin(notes, eq(relatedNotes.relatedNoteId, notes.id))
-    .where(eq(relatedNotes.sourceNoteId, id));
+  const [forwardRelated, reverseRelated, webContent] = await Promise.all([
+    db
+      .select({
+        id: relatedNotes.id,
+        relatedNoteId: relatedNotes.relatedNoteId,
+        similarityScore: relatedNotes.similarityScore,
+        title: notes.title,
+        content: notes.content,
+      })
+      .from(relatedNotes)
+      .innerJoin(notes, eq(relatedNotes.relatedNoteId, notes.id))
+      .where(eq(relatedNotes.sourceNoteId, id)),
+    db
+      .select({
+        id: relatedNotes.id,
+        relatedNoteId: relatedNotes.sourceNoteId,
+        similarityScore: relatedNotes.similarityScore,
+        title: notes.title,
+        content: notes.content,
+      })
+      .from(relatedNotes)
+      .innerJoin(notes, eq(relatedNotes.sourceNoteId, notes.id))
+      .where(eq(relatedNotes.relatedNoteId, id)),
+    db
+      .select()
+      .from(relatedWebContent)
+      .where(eq(relatedWebContent.noteId, id)),
+  ]);
 
-  const webContent = await db
-    .select()
-    .from(relatedWebContent)
-    .where(eq(relatedWebContent.noteId, id));
+  const seenIds = new Set<string>();
+  const related = [...forwardRelated, ...reverseRelated]
+    .sort((a, b) => b.similarityScore - a.similarityScore)
+    .filter((r) => {
+      if (seenIds.has(r.relatedNoteId)) return false;
+      seenIds.add(r.relatedNoteId);
+      return true;
+    });
 
   return NextResponse.json({ note, relatedNotes: related, webContent });
 }

@@ -86,7 +86,7 @@ export function RelatedContent({
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="notes" className="mt-3 space-y-2">
+        <TabsContent value="notes" className="mt-3 space-y-4">
           {relatedNotes.length === 0 ? (
             <p className="py-4 text-center text-xs text-muted-foreground">
               {isPending
@@ -94,37 +94,39 @@ export function RelatedContent({
                 : "No related notes found"}
             </p>
           ) : (
-            relatedNotes.map(
-              (rn: {
-                id: string;
-                relatedNoteId: string;
-                title: string;
-                content: string;
-                similarityScore: number;
-              }) => (
-                <Link key={rn.id} href={`/notes/${rn.relatedNoteId}`}>
-                  <Card
-                    size="sm"
-                    className="transition-colors hover:bg-muted/50"
-                  >
-                    <CardHeader>
-                      <CardTitle className="line-clamp-1 text-sm">
-                        {rn.title}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
-                        {rn.content.slice(0, 100)}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </Link>
-              )
-            )
+            <div className="flex flex-col gap-3">
+              {relatedNotes.map(
+                (rn: {
+                  id: string;
+                  relatedNoteId: string;
+                  title: string;
+                  content: string;
+                  similarityScore: number;
+                }) => (
+                  <Link key={rn.id} href={`/notes/${rn.relatedNoteId}`}>
+                    <Card
+                      size="sm"
+                      className="transition-colors hover:bg-muted/50"
+                    >
+                      <CardHeader>
+                        <CardTitle className="line-clamp-1 text-sm">
+                          {rn.title}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="line-clamp-2 text-xs text-muted-foreground">
+                          {rn.content.slice(0, 100)}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                )
+              )}
+            </div>
           )}
         </TabsContent>
 
-        <TabsContent value="web" className="mt-3 space-y-2">
+        <TabsContent value="web" className="mt-3 space-y-4">
           {webContent.length === 0 ? (
             <p className="py-4 text-center text-xs text-muted-foreground">
               {isPending
@@ -187,20 +189,22 @@ export function RelatedContent({
                               </a>
                             }
                           />
-                          <TooltipContent side="left" className="max-w-xs space-y-1.5 rounded-lg bg-black p-3 text-white">
-                            <p className="text-xs font-medium text-white">{wc.title}</p>
-                            {wc.description && (
-                              <p className="text-xs text-white/70">
-                                {wc.description.slice(0, 200)}
-                              </p>
-                            )}
-                            {wc.thumbnailUrl && (
-                              <img
-                                src={wc.thumbnailUrl}
-                                alt=""
-                                className="mt-1 h-24 w-full rounded object-cover"
-                              />
-                            )}
+                          <TooltipContent side="bottom" className="max-w-xs rounded-lg bg-black p-3 text-white">
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-medium text-white">{wc.title}</p>
+                              {wc.description && (
+                                <p className="text-xs text-white/70">
+                                  {wc.description.slice(0, 200)}
+                                </p>
+                              )}
+                              {wc.thumbnailUrl && (
+                                <img
+                                  src={wc.thumbnailUrl}
+                                  alt=""
+                                  className="mt-1 h-24 w-full rounded object-cover"
+                                />
+                              )}
+                            </div>
                           </TooltipContent>
                         </Tooltip>
                       </div>

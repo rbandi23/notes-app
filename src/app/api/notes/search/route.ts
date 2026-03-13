@@ -37,6 +37,8 @@ export async function GET(req: NextRequest) {
 
   const VECTOR_SIMILARITY_THRESHOLD = 0.3;
 
+  console.log("[search] Query:", query, "| Search terms:", searchTerms);
+
   const [textResults, embedding] = await Promise.all([
     // Full-text search
     (async (): Promise<Array<{ id: string; rank: number }>> => {
@@ -54,6 +56,7 @@ export async function GET(req: NextRequest) {
           ORDER BY rank DESC
           LIMIT 50
         `);
+        console.log("[search] Full-text results:", textRows.rows.length);
         return textRows.rows as Array<{ id: string; rank: number }>;
       } catch (err) {
         console.error("[search] Full-text search failed:", err);
@@ -66,6 +69,8 @@ export async function GET(req: NextRequest) {
       return null;
     }),
   ]);
+
+  console.log("[search] Embedding generated:", !!embedding, "| Text results:", textResults.length);
 
   // 2) Semantic search using the pre-generated embedding
   let vectorResults: Array<{ id: string; similarity: number }> = [];

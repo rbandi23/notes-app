@@ -10,7 +10,6 @@ import { NoteEditor } from "@/components/notes/NoteEditor";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
   Pencil,
@@ -86,13 +85,7 @@ export default function NoteDetailPage({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => {
-            if (window.history.length > 1) {
-              router.back();
-            } else {
-              router.push("/notes");
-            }
-          }}
+          onClick={() => router.back()}
         >
           <ArrowLeft className="size-4" />
           Back
@@ -144,8 +137,6 @@ export default function NoteDetailPage({
             </div>
           )}
 
-          <Separator />
-
           <div className="prose prose-sm dark:prose-invert max-w-none">
             {note.contentJson ? (
               <NoteEditor content={note.contentJson} editable={false} />
@@ -154,8 +145,6 @@ export default function NoteDetailPage({
             )}
           </div>
         </div>
-
-        <Separator />
 
         <RelatedContent
           noteId={id}

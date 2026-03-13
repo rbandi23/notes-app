@@ -12,104 +12,78 @@ export interface ClassificationResult {
   classification: "personal" | "non_personal";
   retrieval_enabled: boolean;
   queries: ClassificationQuery[];
+  tags: string[];
+  related_ranking: string[];
 }
 
-const SYSTEM_PROMPT = `You are a note-retrieval planner for an AI notes app.
+function buildSystemPrompt(candidateTitles: { id: string; title: string }[]): string {
+  const candidateSection = candidateTitles.length > 0
+    ? `
+## Related notes reranking
 
-Your job is to examine a user note and decide whether external web retrieval should be performed.
+You are also given a list of candidate notes (id + title) that might be related to the user's note.
+Rank them by how conceptually related they are to the user's note.
+Return the ids of the top related notes (most related first) in "related_ranking".
+Only include notes that are genuinely related — omit unrelated ones.
 
-## Goal
-Classify the note as:
-- "personal" → do NOT retrieve web results
-- "non_personal" → retrieval MAY be allowed if the note seeks external knowledge
+Candidates:
+${candidateTitles.map((c) => `- id: "${c.id}" title: "${c.title}"`).join("\n")}
+`
+    : "";
 
-Then output a strict JSON object.
+  return `You are a note analysis assistant for an AI notes app.
 
-## Rules
+Your job is to examine a user note and perform three tasks in a single response:
+1. Classify the note and decide on web retrieval
+2. Extract topic tags
+3. ${candidateTitles.length > 0 ? "Rank related note candidates" : "Skip related ranking (no candidates provided)"}
 
-Treat as "personal" if the note is mainly about:
-- private life
-- reminders
-- shopping lists
-- scheduling/logistics
-- journaling
-- emotions/diary-style writing
-- conversations with friends/family
-- personal to-dos
-- health/private matters
-- short operational notes that do not need outside knowledge
+## Task 1: Classification
 
-Examples of personal:
-- "Call mom tomorrow"
-- "Buy eggs and rice"
-- "Dentist appointment at 3"
-- "Feeling stressed about interviews"
-- "Text Alex about rent"
+Classify the note to decide if web retrieval would be useful.
 
-Treat as "non_personal" if the note is mainly about:
-- learning a concept
-- researching a topic
-- understanding a technical term
-- comparing products/tools/companies
-- market/news/topic exploration
-- questions needing external knowledge
-- concepts, entities, technologies, companies, or current events
+- "personal" → purely private, no web results needed
+- "non_personal" → contains topics that could benefit from web context
 
-Examples of non_personal:
-- "How does KV caching reduce latency?"
-- "Compare Pinecone and Weaviate"
-- "Distyl interview process"
-- "Mixture of experts architecture"
-- "Crude oil prices falling recession signal?"
+Only classify as "personal" if the note is PURELY about:
+- grocery/shopping lists with no product research
+- scheduling times/dates with no topic context
+- private diary entries about emotions/feelings
+- simple reminders like "call mom" or "pay rent"
 
-## Retrieval rules
+Default to "non_personal" for everything else. Most notes benefit from web context. Notes about work, projects, technical topics, learning, meetings with technical discussion, comparisons, planning that involves products/services — these are all "non_personal".
 
-Only generate web queries when ALL are true:
-1. classification = "non_personal"
-2. the note clearly benefits from external knowledge
-3. the note has enough information to form useful search queries
+When in doubt, classify as "non_personal" with retrieval_enabled = true.
 
-If the note is vague, weak, ambiguous, or does not clearly require outside information, do not generate queries.
+### Retrieval rules
 
-When uncertain, prefer:
-- classification = "personal" if it seems private
-- otherwise classification = "non_personal" but retrieval_enabled = false
+Generate web queries when classification = "non_personal" and the note has enough substance to form useful queries. Be generous — if there's any topic worth looking up, enable retrieval.
 
-## Query generation rules
+If retrieval is enabled, generate 1 to 3 search queries with:
+- "query": the search string
+- "intent": "explain" | "compare" | "research" | "news" | "entity"
+- "keyword": main topic (1-3 words), displayed as a title
+- "description": human-readable sentence about what the reader will learn
 
-If retrieval is enabled:
-- generate 1 to 3 search queries
-- queries should reflect the actual intent of the note
-- prefer high-signal queries, not generic ones
-- include important entities, concepts, products, or technical phrases
-- avoid personal/private words unless they are part of a public topic
-- do not invent details not present in the note
+## Task 2: Tag extraction
 
-For each query, also provide:
-- "keyword": the main topic word or short phrase (1-3 words) that names the concept. This is displayed as a title.
-- "description": a human-readable sentence describing what a reader would learn from the search result. Write it as an action phrase like "Learn how batching improves GPU utilization for LLMs" or "Understand mixture of experts architecture in transformers" or "Compare vector databases for semantic search". This is the text shown to the user.
-
+Extract 2-4 key topic tags from the note. Tags should be:
+- lowercase
+- short (1-3 words each)
+- representative of the main subjects
+${candidateSection}
 ## Output format
 
-Return ONLY valid JSON.
-Do not include markdown.
-Do not include explanation outside JSON.
-
-Use this exact schema:
+Return ONLY valid JSON. No markdown. No explanation.
 
 {
   "classification": "personal" | "non_personal",
   "retrieval_enabled": true | false,
   "reason": "short reason",
   "confidence": 0.0,
-  "queries": [
-    {
-      "query": "search query string",
-      "intent": "explain" | "compare" | "research" | "news" | "entity",
-      "keyword": "main topic (1-3 words)",
-      "description": "human-readable sentence about what the reader will learn"
-    }
-  ]
+  "queries": [],
+  "tags": ["tag1", "tag2"],
+  "related_ranking": ["id1", "id2"]
 }
 
 ## Constraints
@@ -118,20 +92,26 @@ Use this exact schema:
 - If retrieval_enabled = false, queries must be []
 - confidence must be a number between 0 and 1
 - Keep reason under 20 words
+- tags must be an array of 2-4 lowercase strings
+- related_ranking must be an array of candidate ids (most related first), or [] if no candidates
 - Never output anything except the JSON object`;
+}
 
 export async function classifyNote(
   title: string,
-  content: string
+  content: string,
+  candidates?: { id: string; title: string }[]
 ): Promise<ClassificationResult> {
-  const defaultNonPersonal: ClassificationResult = {
+  const defaultResult: ClassificationResult = {
     classification: "non_personal",
     retrieval_enabled: true,
     queries: [{ query: title, intent: "research", keyword: title, description: title }],
+    tags: [],
+    related_ranking: [],
   };
 
   if (!process.env.OPENAI_API_KEY) {
-    return defaultNonPersonal;
+    return defaultResult;
   }
 
   try {
@@ -141,7 +121,7 @@ export async function classifyNote(
     const response = await client.chat.completions.create({
       model: LLM_MODEL,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: buildSystemPrompt(candidates || []) },
         { role: "user", content: noteText },
       ],
     });
@@ -153,9 +133,13 @@ export async function classifyNote(
       classification: parsed.classification === "personal" ? "personal" : "non_personal",
       retrieval_enabled: !!parsed.retrieval_enabled,
       queries: Array.isArray(parsed.queries) ? parsed.queries : [],
+      tags: Array.isArray(parsed.tags)
+        ? parsed.tags.filter((t: unknown): t is string => typeof t === "string").slice(0, 5)
+        : [],
+      related_ranking: Array.isArray(parsed.related_ranking) ? parsed.related_ranking : [],
     };
   } catch (error) {
     console.error("Failed to classify note:", error);
-    return defaultNonPersonal;
+    return defaultResult;
   }
 }

@@ -3,8 +3,6 @@ import { db } from "@/lib/db";
 import { notes, relatedNotes, relatedWebContent } from "@/lib/db/schema";
 import { generateEmbedding } from "@/lib/embeddings";
 import { searchWeb } from "@/lib/search";
-
-import { extractTags } from "@/lib/tags";
 import { classifyNote } from "@/lib/classify";
 import { eq, sql } from "drizzle-orm";
 
@@ -29,53 +27,7 @@ function logError(step: string, message: string, error: unknown) {
 
 const SIMILARITY_THRESHOLD = 0.3;
 const MAX_RELATED_NOTES = 5;
-
-interface ScoredNote {
-  id: string;
-  vectorScore: number;
-  keywordScore: number;
-  combinedScore: number;
-}
-
-function rerank(
-  vectorResults: Array<{ id: string; similarity: number }>,
-  keywordResults: Array<{ id: string; rank: number }>,
-  vectorWeight = 0.6,
-  keywordWeight = 0.4
-): ScoredNote[] {
-  const scoreMap = new Map<string, ScoredNote>();
-
-  for (const r of vectorResults) {
-    scoreMap.set(r.id, {
-      id: r.id,
-      vectorScore: r.similarity,
-      keywordScore: 0,
-      combinedScore: 0,
-    });
-  }
-
-  for (const r of keywordResults) {
-    const existing = scoreMap.get(r.id);
-    if (existing) {
-      existing.keywordScore = r.rank;
-    } else {
-      scoreMap.set(r.id, {
-        id: r.id,
-        vectorScore: 0,
-        keywordScore: r.rank,
-        combinedScore: 0,
-      });
-    }
-  }
-
-  const scored = Array.from(scoreMap.values());
-  for (const s of scored) {
-    s.combinedScore =
-      s.vectorScore * vectorWeight + s.keywordScore * keywordWeight;
-  }
-
-  return scored.sort((a, b) => b.combinedScore - a.combinedScore);
-}
+const LLM_RANK_BOOST = 0.15;
 
 export const enrichNote = inngest.createFunction(
   { id: "enrich-note", retries: 2 },
@@ -113,50 +65,27 @@ export const enrichNote = inngest.createFunction(
       .join(". ");
     log("prepare-text", "Text content prepared", { length: textContent.length });
 
-    // Generate embedding, extract tags, and classify note in parallel
-    const [embedding, tags, classification] = await step.run("llm-parallel", async () => {
-      log("llm-parallel", "Running embedding, tags, and classification in parallel");
+    // Step 1: Generate embedding
+    const embedding = await step.run("generate-embedding", async () => {
+      log("generate-embedding", "Generating embedding");
       try {
-        const result = await Promise.all([
-          generateEmbedding(textContent),
-          extractTags(textContent),
-          classifyNote(note.title, note.content),
-        ]);
-        log("llm-parallel", "All LLM steps completed", {
-          embeddingDims: result[0].length,
-          tags: result[1],
-          classification: result[2].classification,
-        });
-        return result;
+        const emb = await generateEmbedding(textContent);
+        log("generate-embedding", "Embedding generated", { dims: emb.length });
+        return emb;
       } catch (err) {
-        logError("llm-parallel", "Failed parallel LLM step", err);
+        logError("generate-embedding", "Failed to generate embedding", err);
         throw err;
       }
     });
 
-    // Store embedding and tags
-    await step.run("store-embedding", async () => {
-      log("store-embedding", "Storing embedding and tags", { tagCount: tags.length });
-      await db
-        .update(notes)
-        .set({ embedding, tags: tags.length > 0 ? tags : note.tags })
-        .where(eq(notes.id, noteId));
-      log("store-embedding", "Stored successfully");
-    });
-
-    // Find related notes: vector similarity + keyword matching + rerank
-    await step.run("find-related-notes", async () => {
-      log("find-related-notes", "Starting related notes search", { noteId });
-      await db
-        .delete(relatedNotes)
-        .where(eq(relatedNotes.sourceNoteId, noteId));
-
+    // Step 2: Find vector candidates + keyword candidates
+    const candidates = await step.run("find-candidates", async () => {
+      log("find-candidates", "Finding candidate notes");
       const embeddingStr = `[${embedding.join(",")}]`;
 
-      // 1) Vector similarity — broad candidate set
-      log("find-related-notes", "Running vector similarity search");
+      // Vector similarity candidates
       const vectorCandidates = await db.execute(sql`
-        SELECT id, 1 - (embedding <=> ${embeddingStr}::vector) AS similarity
+        SELECT id, title, 1 - (embedding <=> ${embeddingStr}::vector) AS similarity
         FROM notes
         WHERE user_id = ${note.userId}
           AND id != ${noteId}
@@ -165,7 +94,7 @@ export const enrichNote = inngest.createFunction(
         LIMIT 20
       `);
 
-      // 2) Keyword matching via Postgres full-text search
+      // Keyword candidates
       const searchText = `${note.title} ${note.content.slice(0, 200)}`
         .replace(/[^\w\s]/g, " ")
         .split(/\s+/)
@@ -173,7 +102,6 @@ export const enrichNote = inngest.createFunction(
         .slice(0, 12)
         .join(" | ");
 
-      log("find-related-notes", "Running keyword search", { searchText });
       let keywordRows: Array<{ id: string; rank: number }> = [];
       if (searchText.trim()) {
         try {
@@ -191,66 +119,134 @@ export const enrichNote = inngest.createFunction(
             ORDER BY rank DESC
             LIMIT 20
           `);
-          keywordRows = keywordCandidates.rows as Array<{
-            id: string;
-            rank: number;
-          }>;
+          keywordRows = keywordCandidates.rows as Array<{ id: string; rank: number }>;
         } catch (err) {
-          logError("find-related-notes", "Keyword search failed (tsquery error)", err);
+          logError("find-candidates", "Keyword search failed", err);
         }
       }
 
       const vectorRows = vectorCandidates.rows as Array<{
         id: string;
+        title: string;
         similarity: number;
       }>;
 
-      log("find-related-notes", "Search results", {
+      log("find-candidates", "Candidates found", {
         vectorCount: vectorRows.length,
         keywordCount: keywordRows.length,
       });
 
-      // 3) Rerank, filter by threshold, then take top N
-      const ranked = rerank(vectorRows, keywordRows);
-      const qualified = ranked.filter(
-        (s) => s.combinedScore >= SIMILARITY_THRESHOLD
-      );
-
-      log("find-related-notes", "Reranked results", {
-        totalCandidates: ranked.length,
-        qualifiedCount: qualified.length,
-        topScores: qualified.slice(0, 5).map((s) => ({
-          id: s.id,
-          score: s.combinedScore.toFixed(3),
-        })),
-      });
-
-      await Promise.all(qualified.slice(0, MAX_RELATED_NOTES).flatMap((scored) => [
-        // Forward: this note → related note
-        db.insert(relatedNotes).values({
-          sourceNoteId: noteId,
-          relatedNoteId: scored.id,
-          similarityScore: scored.combinedScore,
-        }).onConflictDoUpdate({
-          target: [relatedNotes.sourceNoteId, relatedNotes.relatedNoteId],
-          set: { similarityScore: scored.combinedScore },
-        }),
-        // Reverse: related note → this note (bidirectional)
-        db.insert(relatedNotes).values({
-          sourceNoteId: scored.id,
-          relatedNoteId: noteId,
-          similarityScore: scored.combinedScore,
-        }).onConflictDoUpdate({
-          target: [relatedNotes.sourceNoteId, relatedNotes.relatedNoteId],
-          set: { similarityScore: scored.combinedScore },
-        }),
-      ]));
-      log("find-related-notes", "Stored related notes", {
-        count: Math.min(qualified.length, MAX_RELATED_NOTES),
-      });
+      return { vectorRows, keywordRows };
     });
 
-    // Web search (only for non-personal notes with retrieval enabled)
+    // Step 3: Single LLM call — classify + tags + rerank candidates
+    const classification = await step.run("analyze-note", async () => {
+      // Build candidate list with titles for LLM reranking
+      const candidateTitles = candidates.vectorRows
+        .filter((r) => r.similarity >= SIMILARITY_THRESHOLD)
+        .slice(0, 10)
+        .map((r) => ({ id: r.id, title: r.title }));
+
+      log("analyze-note", "Running combined LLM analysis", {
+        candidateCount: candidateTitles.length,
+      });
+
+      try {
+        const result = await classifyNote(note.title, note.content, candidateTitles);
+        log("analyze-note", "LLM analysis complete", {
+          classification: result.classification,
+          tags: result.tags,
+          relatedRanking: result.related_ranking,
+          queryCount: result.queries.length,
+        });
+        return result;
+      } catch (err) {
+        logError("analyze-note", "LLM analysis failed", err);
+        throw err;
+      }
+    });
+
+    // Step 4: Store embedding and tags
+    await step.run("store-embedding", async () => {
+      const tags = classification.tags;
+      log("store-embedding", "Storing embedding and tags", { tagCount: tags.length });
+      await db
+        .update(notes)
+        .set({ embedding, tags: tags.length > 0 ? tags : note.tags })
+        .where(eq(notes.id, noteId));
+      log("store-embedding", "Stored successfully");
+    });
+
+    // Step 5: Store related notes with LLM-boosted ranking
+    await step.run("store-related-notes", async () => {
+      log("store-related-notes", "Computing final rankings");
+      await db
+        .delete(relatedNotes)
+        .where(eq(relatedNotes.sourceNoteId, noteId));
+
+      // Build score map from vector + keyword results
+      const scoreMap = new Map<string, number>();
+
+      const vectorWeight = 0.6;
+      const keywordWeight = 0.4;
+
+      for (const r of candidates.vectorRows) {
+        scoreMap.set(r.id, r.similarity * vectorWeight);
+      }
+
+      const maxRank = Math.max(...candidates.keywordRows.map((r) => r.rank), 0.001);
+      for (const r of candidates.keywordRows) {
+        const existing = scoreMap.get(r.id) || 0;
+        scoreMap.set(r.id, existing + (r.rank / maxRank) * keywordWeight);
+      }
+
+      // Apply LLM ranking boost — notes the LLM ranked get a position-based boost
+      const llmRanking = classification.related_ranking || [];
+      for (let i = 0; i < llmRanking.length; i++) {
+        const id = llmRanking[i];
+        const existing = scoreMap.get(id) || 0;
+        // Higher boost for higher-ranked items (first = full boost, last = partial)
+        const positionBoost = LLM_RANK_BOOST * (1 - i / Math.max(llmRanking.length, 1));
+        scoreMap.set(id, existing + positionBoost);
+      }
+
+      // Filter and sort
+      const ranked = Array.from(scoreMap.entries())
+        .filter(([, score]) => score >= SIMILARITY_THRESHOLD)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MAX_RELATED_NOTES);
+
+      log("store-related-notes", "Final rankings", {
+        count: ranked.length,
+        topScores: ranked.map(([id, score]) => ({ id, score: score.toFixed(3) })),
+      });
+
+      if (ranked.length > 0) {
+        await Promise.all(ranked.flatMap(([relatedId, score]) => [
+          // Forward: this note → related note
+          db.insert(relatedNotes).values({
+            sourceNoteId: noteId,
+            relatedNoteId: relatedId,
+            similarityScore: score,
+          }).onConflictDoUpdate({
+            target: [relatedNotes.sourceNoteId, relatedNotes.relatedNoteId],
+            set: { similarityScore: score },
+          }),
+          // Reverse: related note → this note (bidirectional)
+          db.insert(relatedNotes).values({
+            sourceNoteId: relatedId,
+            relatedNoteId: noteId,
+            similarityScore: score,
+          }).onConflictDoUpdate({
+            target: [relatedNotes.sourceNoteId, relatedNotes.relatedNoteId],
+            set: { similarityScore: score },
+          }),
+        ]));
+      }
+      log("store-related-notes", "Stored related notes", { count: ranked.length });
+    });
+
+    // Step 6: Web search (only for non-personal notes with retrieval enabled)
     await step.run("web-search", async () => {
       await db
         .delete(relatedWebContent)

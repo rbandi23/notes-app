@@ -6,22 +6,29 @@ let localPipeline: ((text: string) => Promise<number[]>) | null = null;
 async function getLocalPipeline() {
   if (localPipeline) return localPipeline;
 
-  // Dynamic import to avoid issues in edge runtime
-  const { pipeline } = await import("@xenova/transformers");
-  const extractor = await pipeline(
-    "feature-extraction",
-    "Xenova/all-MiniLM-L6-v2"
-  );
+  try {
+    // Dynamic import to avoid issues in edge/serverless runtime
+    const { pipeline } = await import("@xenova/transformers");
+    const extractor = await pipeline(
+      "feature-extraction",
+      "Xenova/all-MiniLM-L6-v2"
+    );
 
-  localPipeline = async (text: string): Promise<number[]> => {
-    const output = await extractor(text, {
-      pooling: "mean",
-      normalize: true,
-    });
-    return Array.from(output.data as Float32Array);
-  };
+    localPipeline = async (text: string): Promise<number[]> => {
+      const output = await extractor(text, {
+        pooling: "mean",
+        normalize: true,
+      });
+      return Array.from(output.data as Float32Array);
+    };
 
-  return localPipeline;
+    return localPipeline;
+  } catch (err) {
+    console.error("Transformers.js not available in this environment:", err);
+    throw new Error(
+      "No embedding provider available. Set OPENAI_API_KEY or run in an environment that supports Transformers.js."
+    );
+  }
 }
 
 async function openaiEmbed(text: string): Promise<number[]> {

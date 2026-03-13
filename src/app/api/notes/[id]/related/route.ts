@@ -25,7 +25,8 @@ export async function GET(
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
 
-  const [related, webContent] = await Promise.all([
+  const [forwardRelated, reverseRelated, webContent] = await Promise.all([
+    // Notes where this note is the source
     db
       .select({
         id: relatedNotes.id,
@@ -37,11 +38,33 @@ export async function GET(
       .from(relatedNotes)
       .innerJoin(notes, eq(relatedNotes.relatedNoteId, notes.id))
       .where(eq(relatedNotes.sourceNoteId, id)),
+    // Notes where this note is the target
+    db
+      .select({
+        id: relatedNotes.id,
+        relatedNoteId: relatedNotes.sourceNoteId,
+        similarityScore: relatedNotes.similarityScore,
+        title: notes.title,
+        content: notes.content,
+      })
+      .from(relatedNotes)
+      .innerJoin(notes, eq(relatedNotes.sourceNoteId, notes.id))
+      .where(eq(relatedNotes.relatedNoteId, id)),
     db
       .select()
       .from(relatedWebContent)
       .where(eq(relatedWebContent.noteId, id)),
   ]);
+
+  // Deduplicate by relatedNoteId, keep highest score
+  const seenIds = new Set<string>();
+  const related = [...forwardRelated, ...reverseRelated]
+    .sort((a, b) => b.similarityScore - a.similarityScore)
+    .filter((r) => {
+      if (seenIds.has(r.relatedNoteId)) return false;
+      seenIds.add(r.relatedNoteId);
+      return true;
+    });
 
   return NextResponse.json({
     enrichmentStatus: note.enrichmentStatus,
