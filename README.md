@@ -40,7 +40,7 @@ An AI-powered note-taking app that automatically enriches your notes with semant
 |------|-----------|
 | Notes List | ![Notes List](screenshots/notes-list.png) |
 | Knowledge Graph | ![Knowledge Graph](screenshots/knowledge-graph.png) |
-| webresults | ![webresults](screenshots/login.png) |
+| webresults | ![webresults](screenshots/web_results.png) |
 | Login | ![Login](screenshots/login.png) |
 
 
